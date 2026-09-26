@@ -36,7 +36,7 @@ from neo4j_service.service import (
 )
 from search_service.service import find_sources
 from source_filter.filter import filter_official
-from llm_service.provider import extract_procedure
+from llm_service import extract_procedure, LLMServiceUnavailable
 from validator.validator import validate
 
 logger = logging.getLogger("humsafar.orchestrator")
@@ -118,7 +118,11 @@ def generate_roadmap(request: RoadmapRequest) -> RoadmapResponse:
 
     # 6. Extract structured procedure via LLM (Grok -> Gemini Flash)
     try:
-        procedure = extract_procedure(service, jurisdiction, official_sources)
+        procedure = extract_procedure(
+            sources=official_sources,
+            service=service,
+            jurisdiction=jurisdiction,
+        )
     except Exception as exc:
         procedure = None
         logger.error(f"LLM extraction raised an exception: {exc}")

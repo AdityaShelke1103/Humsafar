@@ -17,7 +17,7 @@ from schemas.models import (
     RoadmapResponse,
 )
 from orchestrator.orchestrator import generate_roadmap
-from llm_service.provider import answer_doubt, check_provider_availability
+from llm_service import answer_step_question, check_provider_availability
 from neo4j_service.service import is_connected
 
 app = FastAPI(title="Humsafar Backend")

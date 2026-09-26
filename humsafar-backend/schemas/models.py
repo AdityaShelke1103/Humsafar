@@ -41,7 +41,7 @@ class ProcedureStatus(str, Enum):
 
 
 class LLMProvider(str, Enum):
-    GROK = "grok"
+    GROQ = "groq"
     GEMINI_FLASH = "gemini_flash"
     NONE = "none"                   # used when no LLM call succeeded
 
