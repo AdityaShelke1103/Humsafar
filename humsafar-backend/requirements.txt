@@ -1,5 +1,15 @@
+# Core backend framework
 fastapi
 uvicorn
 pydantic
 httpx
 python-dotenv
+
+# LLM providers (Person 3)
+groq
+google-genai            # new non-deprecated Gemini SDK (preferred)
+google-generativeai     # kept as fallback in case google-genai not available
+
+# Utilities
+python-dotenv
+httpx
