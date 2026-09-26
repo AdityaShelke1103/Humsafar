@@ -8,12 +8,21 @@ Wires the full Humsafar pipeline together (spec sections 2 and 9):
   normalize -> Neo4j check -> search -> filter -> LLM extract
   -> validate -> save -> build roadmap response
 
+Fallback hierarchy on any failure (spec sections 6 and 17):
+
+  fresh Neo4j -> live pipeline (search + LLM) -> stale Neo4j
+  -> demo procedure -> clear error
+
 This is the ONLY file that should call across all other modules.
 Persons 1-3 should not need to edit this file — if their module's
 signature needs to change, they raise it with Person 4 first.
 """
 
+import logging
+from typing import Optional
+
 from schemas.models import (
+    Procedure,
     ProcedureStatus,
     RoadmapRequest,
     RoadmapResponse,
@@ -30,8 +39,42 @@ from source_filter.filter import filter_official
 from llm_service.provider import extract_procedure
 from validator.validator import validate
 
-# TODO (Person 4): wire in real demo-procedure lookup for final fallback
-DEMO_PROCEDURES = {}  # e.g. {("domicile_certificate", "Maharashtra"): Procedure(...)}
+logger = logging.getLogger("humsafar.orchestrator")
+
+# TODO (Person 4 / Person 1): populate with real demo procedures,
+# e.g. {("domicile_certificate", "Maharashtra"): Procedure(...)}
+DEMO_PROCEDURES: dict[tuple[str, str], Procedure] = {}
+
+
+def _fallback_after_live_failure(
+    service: str, jurisdiction: str, reason: str
+) -> RoadmapResponse:
+    """
+    Shared fallback path used whenever the live pipeline (search + LLM)
+    cannot produce a usable procedure: try stale Neo4j data, then a
+    verified demo procedure, then give up with a clear error.
+    Never returns a blank/broken response (spec section 6, 17, 20).
+    """
+    logger.warning(f"Live pipeline unavailable ({reason}) for {service}/{jurisdiction}")
+
+    stale = get_stale_procedure(service, jurisdiction)
+    if stale:
+        stale.status = ProcedureStatus.STALE
+        return RoadmapResponse(success=True, procedure=stale)
+
+    demo = DEMO_PROCEDURES.get((service, jurisdiction))
+    if demo:
+        demo.status = ProcedureStatus.DEMO
+        return RoadmapResponse(success=True, procedure=demo)
+
+    return RoadmapResponse(
+        success=False,
+        error=(
+            "We couldn't retrieve official information for this request "
+            "right now. Please try again shortly, or try a different "
+            "service/jurisdiction."
+        ),
+    )
 
 
 def generate_roadmap(request: RoadmapRequest) -> RoadmapResponse:
@@ -43,43 +86,71 @@ def generate_roadmap(request: RoadmapRequest) -> RoadmapResponse:
         return RoadmapResponse(success=False, clarification=clarification)
 
     # 2. Check Neo4j for a fresh verified procedure
-    procedure = get_fresh_procedure(service, jurisdiction)
+    try:
+        procedure = get_fresh_procedure(service, jurisdiction)
+    except Exception as exc:
+        logger.error(f"Neo4j lookup failed: {exc}")
+        procedure = None
+
     if procedure:
         return RoadmapResponse(success=True, procedure=procedure)
 
-    # 3. Live discovery pipeline
-    raw_sources = find_sources(service, jurisdiction)
-    official_sources = filter_official(raw_sources)
-    procedure = extract_procedure(service, jurisdiction, official_sources)
+    # 3. Live discovery pipeline — search
+    try:
+        raw_sources = find_sources(service, jurisdiction)
+    except Exception as exc:
+        return _fallback_after_live_failure(service, jurisdiction, f"search error: {exc}")
 
-    # 4. LLM failed entirely -> fall back
-    if procedure is None:
-        stale = get_stale_procedure(service, jurisdiction)
-        if stale:
-            return RoadmapResponse(success=True, procedure=stale)
+    # 4. Filter to official sources only
+    try:
+        official_sources = filter_official(raw_sources)
+        #print(f"DEBUG: {len(official_sources)} official sources found: {[s.domain for s in official_sources]}")
+    except Exception as exc:
+        return _fallback_after_live_failure(service, jurisdiction, f"filter error: {exc}")
 
-        demo = DEMO_PROCEDURES.get((service, jurisdiction))
-        if demo:
-            return RoadmapResponse(success=True, procedure=demo)
-
-        return RoadmapResponse(
-            success=False,
-            error="We couldn't retrieve this procedure right now. Please try again shortly.",
+    # 5. No official sources survived filtering -> don't bother calling
+    #    the LLM with nothing, go straight to fallback (spec section 9
+    #    Step 3: don't treat unofficial sources as authoritative).
+    if not official_sources:
+        return _fallback_after_live_failure(
+            service, jurisdiction, "no official sources found"
         )
 
-    # 5. Validate
+    # 6. Extract structured procedure via LLM (Grok -> Gemini Flash)
+    try:
+        procedure = extract_procedure(service, jurisdiction, official_sources)
+    except Exception as exc:
+        procedure = None
+        logger.error(f"LLM extraction raised an exception: {exc}")
+
+    if procedure is None:
+        return _fallback_after_live_failure(
+            service, jurisdiction, "both LLM providers failed"
+        )
+
+    # 7. Reject a procedure with no actual steps — extraction produced
+    #    nothing usable even though it didn't technically "fail"
+    if not procedure.steps:
+        return _fallback_after_live_failure(
+            service, jurisdiction, "LLM returned no steps"
+        )
+
+    # 8. Validate
     result = validate(procedure)
     if not result.is_valid:
-        # TODO (Person 4): decide fallback behavior on validation failure
-        # (retry once? fall back to stale/demo? for now, surface an error)
-        return RoadmapResponse(
-            success=False,
-            error=f"Generated procedure failed validation: {result.errors}",
+        logger.warning(f"Validation failed: {result.errors}")
+        return _fallback_after_live_failure(
+            service, jurisdiction, f"validation failed: {result.errors}"
         )
 
-    # 6. Store validated procedure for reuse
+    # 9. Store validated procedure for reuse
     procedure.status = ProcedureStatus.VERIFIED
-    save_procedure(procedure)
+    try:
+        save_procedure(procedure)
+    except Exception as exc:
+        # Don't fail the user's request just because the save failed —
+        # they still get a valid roadmap, it just won't be cached.
+        logger.error(f"Failed to save procedure to Neo4j: {exc}")
 
-    # 7. Return to frontend
+    # 10. Return to frontend
     return RoadmapResponse(success=True, procedure=procedure)
