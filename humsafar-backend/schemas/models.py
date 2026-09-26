@@ -60,6 +60,10 @@ class OfficialSource(BaseModel):
     url: HttpUrl
     domain: str = Field(..., description="e.g. 'maharashtra.gov.in'")
     source_type: SourceType = SourceType.OTHER
+    content: Optional[str] = Field(
+        None,
+        description="Retrieved content from the official source used for LLM extraction",
+    )
     verified_at: Optional[datetime] = None
 
 
