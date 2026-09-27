@@ -32,6 +32,8 @@ export interface StepDetail {
 
 export interface JourneyStep {
   id: number;
+  /** The backend's real step id (e.g. "step_2") — needed for /api/doubt calls. */
+  backendStepId: string;
   title: string;
   shortTitle: string;
   icon: string;
@@ -49,9 +51,15 @@ export interface Journey {
   steps: JourneyStep[];
   sources: SourceLink[];
   intelligenceSteps: { label: string; icon: string }[];
+  /** Real backend service key (e.g. "domicile_certificate") — needed for /api/doubt calls. */
+  service: string;
+  estimatedTimeline?: string;
+  officialFee?: string;
+  status?: 'verified' | 'stale' | 'demo' | 'partial';
 }
 
 export const domicileJourney: Journey = {
+  service: 'domicile_certificate',
   title: 'Maharashtra Domicile Certificate',
   state: 'Maharashtra',
   department: 'Revenue Department',
@@ -128,6 +136,7 @@ export const domicileJourney: Journey = {
   steps: [
     {
       id: 1,
+      backendStepId: 'step_1',
       title: 'Gather Your Documents',
       shortTitle: 'Documents',
       icon: 'folder',
@@ -173,6 +182,7 @@ export const domicileJourney: Journey = {
     },
     {
       id: 2,
+      backendStepId: 'step_2',
       title: 'Register on Aaple Sarkar Portal',
       shortTitle: 'Register',
       icon: 'globe',
@@ -212,6 +222,7 @@ export const domicileJourney: Journey = {
     },
     {
       id: 3,
+      backendStepId: 'step_3',
       title: 'Submit Online Application',
       shortTitle: 'Application',
       icon: 'file-text',
@@ -261,6 +272,7 @@ export const domicileJourney: Journey = {
     },
     {
       id: 4,
+      backendStepId: 'step_4',
       title: 'Document Verification at Tahsildar Office',
       shortTitle: 'Verification',
       icon: 'building',
@@ -308,6 +320,7 @@ export const domicileJourney: Journey = {
     },
     {
       id: 5,
+      backendStepId: 'step_5',
       title: 'Approval and Certificate Generation',
       shortTitle: 'Approval',
       icon: 'check-circle',
@@ -344,6 +357,7 @@ export const domicileJourney: Journey = {
     },
     {
       id: 6,
+      backendStepId: 'step_6',
       title: 'Download Your Certificate',
       shortTitle: 'Certificate',
       icon: 'award',
