@@ -323,7 +323,7 @@ def extract_procedure(
     # -- 4. determine which provider was used --------------------------------
     # We can't easily know from call_llm's return value which provider won,
     # so we log it there; here we mark it conservatively.
-    provider_used = LLMProvider.GROK  # updated to GEMINI_FLASH by provider.py logs
+    provider_used = LLMProvider.GROQ  # updated to GEMINI_FLASH by provider.py logs
 
     # -- 5. assemble Procedure -----------------------------------------------
     raw_docs: List[Dict] = llm_response.get("documents", [])
