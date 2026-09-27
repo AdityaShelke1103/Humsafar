@@ -1,4 +1,4 @@
-﻿"""
+"""
 llm_service/extraction_service.py
 
 Owner: Person 3 (LLM)
@@ -66,7 +66,7 @@ except ImportError:
         PARTIAL = "partial"
 
     class LLMProvider(str, Enum):  # type: ignore[no-redef]
-        GROK = "grok"
+        GROQ = "groq"
         GEMINI_FLASH = "gemini_flash"
         NONE = "none"
 
@@ -278,12 +278,26 @@ def extract_procedure(
     valid_source_ids = [s.id for s in usable]
 
     # -- 2. build source text block ----------------------------------------
+    # Real scraped web content can be long and messy (navigation menus,
+    # boilerplate, social media links etc.). Cap each source at 3000 chars
+    # to keep the total prompt within Groq/Gemini context limits without
+    # over-engineering chunking/embedding for a hackathon build.
+    MAX_CONTENT_CHARS_PER_SOURCE = 3000
+
     source_blocks = []
     for s in usable:
+        content = s.content or ""
+        if len(content) > MAX_CONTENT_CHARS_PER_SOURCE:
+            content = content[:MAX_CONTENT_CHARS_PER_SOURCE] + "\n[...truncated for length]"
+            logger.debug(
+                "[extract] Source %s content truncated to %d chars",
+                s.id,
+                MAX_CONTENT_CHARS_PER_SOURCE,
+            )
         block = (
             f"--- SOURCE: {s.id} | {s.title} | {s.domain} ---\n"
             f"URL: {s.url}\n"
-            f"CONTENT:\n{s.content}\n"
+            f"CONTENT:\n{content}\n"
         )
         source_blocks.append(block)
     sources_text = "\n".join(source_blocks)
