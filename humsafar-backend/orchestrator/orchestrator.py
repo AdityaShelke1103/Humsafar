@@ -19,7 +19,6 @@ signature needs to change, they raise it with Person 4 first.
 """
 
 import logging
-from typing import Optional
 
 from schemas.models import (
     Procedure,
@@ -36,14 +35,11 @@ from neo4j_service.service import (
 )
 from search_service.service import find_sources
 from source_filter.filter import filter_official
-from llm_service.provider import extract_procedure
+from llm_service import extract_procedure, LLMServiceUnavailable
 from validator.validator import validate
+from orchestrator.demo_procedures import DEMO_PROCEDURES
 
 logger = logging.getLogger("humsafar.orchestrator")
-
-# TODO (Person 4 / Person 1): populate with real demo procedures,
-# e.g. {("domicile_certificate", "Maharashtra"): Procedure(...)}
-DEMO_PROCEDURES: dict[tuple[str, str], Procedure] = {}
 
 
 def _fallback_after_live_failure(
@@ -104,7 +100,6 @@ def generate_roadmap(request: RoadmapRequest) -> RoadmapResponse:
     # 4. Filter to official sources only
     try:
         official_sources = filter_official(raw_sources)
-        #print(f"DEBUG: {len(official_sources)} official sources found: {[s.domain for s in official_sources]}")
     except Exception as exc:
         return _fallback_after_live_failure(service, jurisdiction, f"filter error: {exc}")
 
@@ -116,20 +111,29 @@ def generate_roadmap(request: RoadmapRequest) -> RoadmapResponse:
             service, jurisdiction, "no official sources found"
         )
 
-    # 6. Extract structured procedure via LLM (Grok -> Gemini Flash)
+    # 6. Extract structured procedure via LLM (Groq -> Gemini Flash).
+    #    Person 3's extract_procedure raises LLMServiceUnavailable on
+    #    total failure instead of returning None — catch that here.
     try:
-        procedure = extract_procedure(service, jurisdiction, official_sources)
-    except Exception as exc:
-        procedure = None
-        logger.error(f"LLM extraction raised an exception: {exc}")
-
-    if procedure is None:
+        procedure = extract_procedure(
+            sources=official_sources,
+            service=service,
+            jurisdiction=jurisdiction,
+        )
+    except LLMServiceUnavailable as exc:
         return _fallback_after_live_failure(
-            service, jurisdiction, "both LLM providers failed"
+            service, jurisdiction, f"both LLM providers failed: {exc}"
+        )
+    except Exception as exc:
+        # Any other unexpected error from the LLM layer — don't let it
+        # crash the request, treat it the same as a provider failure.
+        logger.error(f"LLM extraction raised an unexpected exception: {exc}")
+        return _fallback_after_live_failure(
+            service, jurisdiction, f"unexpected LLM error: {exc}"
         )
 
-    # 7. Reject a procedure with no actual steps — extraction produced
-    #    nothing usable even though it didn't technically "fail"
+    # 7. Reject a procedure with no actual steps — extraction "succeeded"
+    #    but produced nothing usable (e.g. sources had no content).
     if not procedure.steps:
         return _fallback_after_live_failure(
             service, jurisdiction, "LLM returned no steps"
