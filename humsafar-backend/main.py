@@ -1,13 +1,5 @@
-"""
-api/main.py
-
-Owner: Person 4 (Orchestrator)
-
-FastAPI app exposing the three endpoints the frontend needs
-(spec section 14): roadmap generation, doubt assistant, health.
-"""
-
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from schemas.models import (
     DoubtRequest,
@@ -22,6 +14,14 @@ from neo4j_service.service import is_connected, get_fresh_procedure
 
 app = FastAPI(title="Humsafar Backend")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.post("/api/roadmap", response_model=RoadmapResponse)
 def roadmap_endpoint(request: RoadmapRequest) -> RoadmapResponse:
@@ -30,9 +30,6 @@ def roadmap_endpoint(request: RoadmapRequest) -> RoadmapResponse:
 
 @app.post("/api/doubt", response_model=DoubtResponse)
 def doubt_endpoint(request: DoubtRequest) -> DoubtResponse:
-    # Fetch the stored procedure so we can find the actual Step object
-    # and its relevant sources — answer_step_question needs the real
-    # Step, not just a step_id string.
     procedure = get_fresh_procedure(request.service, request.jurisdiction)
 
     if procedure is None:
@@ -44,7 +41,10 @@ def doubt_endpoint(request: DoubtRequest) -> DoubtResponse:
             error="No stored procedure found for this service/jurisdiction.",
         )
 
-    current_step = next((s for s in procedure.steps if s.id == request.step_id), None)
+    current_step = next(
+        (s for s in procedure.steps if s.id == request.step_id),
+        None,
+    )
 
     if current_step is None:
         return DoubtResponse(
@@ -55,7 +55,6 @@ def doubt_endpoint(request: DoubtRequest) -> DoubtResponse:
             error=f"Step '{request.step_id}' not found in this procedure.",
         )
 
-    # Only pass sources relevant to this specific step, per spec section 15
     relevant_sources = [
         s for s in procedure.sources if s.id in current_step.source_ids
     ]
