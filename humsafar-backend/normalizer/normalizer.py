@@ -37,6 +37,10 @@ SERVICE_KEYWORDS = {
     "address change": "aadhaar_address_update",
     "address update": "aadhaar_address_update",
     "aadhaar update": "aadhaar_address_update",
+    "driving license": "driving_license",
+    "driving licence": "driving_license",
+    "learner license": "driving_license",
+    "learner licence": "driving_license",
 }
 
 # Order matters: check longer/more specific phrases before shorter ones

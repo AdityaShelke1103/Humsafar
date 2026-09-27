@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -143,7 +143,7 @@ def get_fresh_procedure(
     except ValueError:
         return None
 
-    if datetime.now() - verified_at > timedelta(
+    if datetime.now(timezone.utc) - verified_at > timedelta(
         days=FRESHNESS_DAYS
     ):
         return None
