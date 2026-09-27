@@ -18,7 +18,7 @@ from schemas.models import (
 )
 from orchestrator.orchestrator import generate_roadmap
 from llm_service import answer_step_question, check_provider_availability
-from neo4j_service.service import is_connected
+from neo4j_service.service import is_connected, get_fresh_procedure
 
 app = FastAPI(title="Humsafar Backend")
 
@@ -30,18 +30,49 @@ def roadmap_endpoint(request: RoadmapRequest) -> RoadmapResponse:
 
 @app.post("/api/doubt", response_model=DoubtResponse)
 def doubt_endpoint(request: DoubtRequest) -> DoubtResponse:
-    # TODO (Person 4): fetch real step context + relevant sources
-    # from the stored procedure (via neo4j_service) before calling
-    # answer_doubt, instead of passing an empty context.
-    step_context = ""  # placeholder
-    relevant_sources = []  # placeholder
+    # Fetch the stored procedure so we can find the actual Step object
+    # and its relevant sources — answer_step_question needs the real
+    # Step, not just a step_id string.
+    procedure = get_fresh_procedure(request.service, request.jurisdiction)
 
-    return answer_doubt(
+    if procedure is None:
+        return DoubtResponse(
+            success=False,
+            answer="",
+            confirmed=False,
+            source_ids=[],
+            error="No stored procedure found for this service/jurisdiction.",
+        )
+
+    current_step = next((s for s in procedure.steps if s.id == request.step_id), None)
+
+    if current_step is None:
+        return DoubtResponse(
+            success=False,
+            answer="",
+            confirmed=False,
+            source_ids=[],
+            error=f"Step '{request.step_id}' not found in this procedure.",
+        )
+
+    # Only pass sources relevant to this specific step, per spec section 15
+    relevant_sources = [
+        s for s in procedure.sources if s.id in current_step.source_ids
+    ]
+
+    result = answer_step_question(
         service=request.service,
         jurisdiction=request.jurisdiction,
-        step_context=step_context,
+        current_step=current_step,
         relevant_sources=relevant_sources,
         question=request.question,
+    )
+
+    return DoubtResponse(
+        success=True,
+        answer=result.get("answer", ""),
+        confirmed=result.get("confirmed", False),
+        source_ids=result.get("source_ids", []),
     )
 
 

@@ -1,61 +1,185 @@
-"""
-neo4j_service/service.py
-
-Owner: Person 1 (GraphDB)
-
-Responsible for all reads/writes to the Neo4j Government Procedure
-Knowledge Graph. Nobody outside this file should talk to Neo4j directly.
-"""
-
-from datetime import datetime, timedelta
+import json
+import os
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from schemas.models import Procedure, ProcedureStatus
+from dotenv import load_dotenv
 
-# Configurable freshness window (spec section 8) — tune as needed
-FRESHNESS_WINDOW = timedelta(days=30)
+from schemas.models import (
+    DocumentRequirement,
+    OfficialSource,
+    Procedure,
+    ProcedureStatus,
+    Step,
+    LLMProvider,
+    SourceType,
+)
 
+load_dotenv()
 
-def get_fresh_procedure(service: str, jurisdiction: str) -> Optional[Procedure]:
-    """
-    Look up a procedure in Neo4j by normalized (service, jurisdiction).
+DB_PATH = os.getenv(
+    "SQLITE_DB_PATH",
+    os.path.join(os.path.dirname(__file__), "humsafar.db")
+)
 
-    Returns:
-        - A Procedure if a FRESH verified one exists.
-        - None if nothing exists, or the existing one is stale
-          (staleness handling can be a separate function if you prefer,
-          e.g. get_stale_procedure()).
-
-    TODO (Person 1): implement real Neo4j query.
-    """
-    return None  # fake: always a miss for now
-
-
-def get_stale_procedure(service: str, jurisdiction: str) -> Optional[Procedure]:
-    """
-    Fallback lookup: return an existing procedure even if it's stale,
-    used when live search + LLM extraction both fail (spec section 6/17).
-
-    TODO (Person 1): implement real Neo4j query.
-    """
-    return None  # fake: nothing stored yet
+FRESHNESS_DAYS = int(os.getenv("FRESHNESS_DAYS", "30"))
 
 
-def save_procedure(procedure: Procedure) -> None:
-    """
-    Persist a validated procedure (and its steps/documents/sources)
-    into Neo4j so future identical requests can reuse it.
+def get_connection():
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
 
-    TODO (Person 1): implement real Neo4j write (MERGE, not CREATE,
-    to avoid duplicate nodes on repeated saves).
-    """
-    pass  # fake: no-op for now
+
+def init_db():
+    connection = get_connection()
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS procedures (
+            service TEXT NOT NULL,
+            jurisdiction TEXT NOT NULL,
+            data TEXT NOT NULL,
+            verified_at TEXT,
+            status TEXT,
+            PRIMARY KEY (service, jurisdiction)
+        )
+        """
+    )
+
+    connection.commit()
+    connection.close()
 
 
 def is_connected() -> bool:
-    """
-    Used by the /health endpoint to report Neo4j connectivity.
+    try:
+        init_db()
+        connection = get_connection()
+        connection.execute("SELECT 1")
+        connection.close()
+        return True
+    except Exception:
+        return False
 
-    TODO (Person 1): implement a real ping/connectivity check.
-    """
-    return False  # fake: report disconnected until implemented
+
+def save_procedure(procedure: Procedure) -> None:
+    init_db()
+
+    verified_at = (
+        procedure.verified_at.isoformat()
+        if procedure.verified_at
+        else None
+    )
+
+    data = procedure.model_dump(mode="json")
+
+    connection = get_connection()
+
+    connection.execute(
+        """
+        INSERT INTO procedures (
+            service,
+            jurisdiction,
+            data,
+            verified_at,
+            status
+        )
+        VALUES (?, ?, ?, ?, ?)
+
+        ON CONFLICT(service, jurisdiction)
+        DO UPDATE SET
+            data = excluded.data,
+            verified_at = excluded.verified_at,
+            status = excluded.status
+        """,
+        (
+            procedure.service,
+            procedure.jurisdiction,
+            json.dumps(data),
+            verified_at,
+            procedure.status
+        )
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def get_fresh_procedure(
+    service: str,
+    jurisdiction: str
+) -> Optional[Procedure]:
+
+    init_db()
+
+    connection = get_connection()
+
+    row = connection.execute(
+        """
+        SELECT data, verified_at, status
+        FROM procedures
+        WHERE service = ?
+          AND jurisdiction = ?
+        """,
+        (service, jurisdiction)
+    ).fetchone()
+
+    connection.close()
+
+    if not row:
+        return None
+
+    if row["status"] != ProcedureStatus.VERIFIED.value:
+        return None
+
+    if not row["verified_at"]:
+        return None
+
+    try:
+        verified_at = datetime.fromisoformat(
+            row["verified_at"]
+        )
+    except ValueError:
+        return None
+
+    if datetime.now(timezone.utc) - verified_at > timedelta(
+        days=FRESHNESS_DAYS
+    ):
+        return None
+
+    return Procedure.model_validate(
+        json.loads(row["data"])
+    )
+
+
+def get_stale_procedure(
+    service: str,
+    jurisdiction: str
+) -> Optional[Procedure]:
+
+    init_db()
+
+    connection = get_connection()
+
+    row = connection.execute(
+        """
+        SELECT data
+        FROM procedures
+        WHERE service = ?
+          AND jurisdiction = ?
+        """,
+        (service, jurisdiction)
+    ).fetchone()
+
+    connection.close()
+
+    if not row:
+        return None
+
+    return Procedure.model_validate(
+        json.loads(row["data"])
+    )
+
+
+init_db()

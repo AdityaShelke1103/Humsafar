@@ -55,12 +55,10 @@ def _fallback_after_live_failure(
 
     stale = get_stale_procedure(service, jurisdiction)
     if stale:
-        stale.status = ProcedureStatus.STALE
         return RoadmapResponse(success=True, procedure=stale)
 
     demo = DEMO_PROCEDURES.get((service, jurisdiction))
     if demo:
-        demo.status = ProcedureStatus.DEMO
         return RoadmapResponse(success=True, procedure=demo)
 
     return RoadmapResponse(
